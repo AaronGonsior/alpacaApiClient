@@ -165,21 +165,21 @@ func JsonToOptions(path string) []Option {
 	}
 
 	var options []Option
-	for _, snapshot := range snapshots {
+	for id, snapshot := range snapshots {
 		snapshotMap, ok := snapshot.(map[string]interface{})
 		if !ok {
 			continue
 		}
 
 		// Get the latestQuote
-		latestQuote, ok := snapshotMap["latestQuote"].(map[string]interface{})
+		latestQuote, ok := snapshotMap["option_contracts"].(map[string]interface{})
 		if !ok {
 			continue
 		}
 
 		// Create new Option from latestQuote data
 		newOption := Option{
-			ID:                getString(latestQuote["id"]),
+			ID:                id,
 			Symbol:            getString(latestQuote["symbol"]),
 			Name:              getString(latestQuote["name"]),
 			Status:            getString(latestQuote["status"]),
@@ -350,22 +350,32 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 				}
 
 				// Get the latestQuote
-				latestQuote, ok := snapshotMap["latestQuote"].(map[string]interface{})
+				latestQuote, ok := snapshotMap["option_contracts"].(map[string]interface{})
 				if !ok {
 					continue
 				}
 
 				// Create new Option
 				newOption := Option{
-					ID: id,
-					Ap: getFloat64(latestQuote["ap"]),
-					As: getInt(latestQuote["as"]),
-					Ax: getString(latestQuote["ax"]),
-					Bp: getFloat64(latestQuote["bp"]),
-					Bs: getInt(latestQuote["bs"]),
-					Bx: getString(latestQuote["bx"]),
-					C:  getString(latestQuote["c"]),
-					T:  getString(latestQuote["t"]),
+					ID:                getString(latestQuote["id"]),
+					Symbol:            getString(latestQuote["symbol"]),
+					Name:              getString(latestQuote["name"]),
+					Status:            getString(latestQuote["status"]),
+					Tradable:          getBool(latestQuote["tradable"]),
+					ExpirationDate:    getString(latestQuote["expiration_date"]),
+					RootSymbol:        getString(latestQuote["root_symbol"]),
+					UnderlyingSymbol:  getString(latestQuote["underlying_symbol"]),
+					UnderlyingAssetID: getString(latestQuote["underlying_asset_id"]),
+					Type:              getString(latestQuote["type"]),
+					Style:             getString(latestQuote["style"]),
+					StrikePrice:       getFloat64(latestQuote["strike_price"]),
+					Multiplier:        getInt(latestQuote["multiplier"]),
+					Size:              getInt(latestQuote["size"]),
+					OpenInterest:      getInt(latestQuote["open_interest"]),
+					OpenInterestDate:  getString(latestQuote["open_interest_date"]),
+					ClosePrice:        getFloat64(latestQuote["close_price"]),
+					ClosePriceDate:    getString(latestQuote["close_price_date"]),
+					PPIND:             getBool(latestQuote["ppind"]),
 				}
 
 				options = append(options, newOption)
