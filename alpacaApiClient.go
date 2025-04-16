@@ -294,7 +294,8 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 
 	// Base URL for options chain with strike price and expiration date filtering
 	// Using limit=1000 to minimize API requests (maximum allowed by API)
-	baseURL := fmt.Sprintf("https://data.alpaca.markets/v1beta1/options/snapshots/%s", optreq.Ticker)
+
+	baseURL := fmt.Sprintf("https://paper-api.alpaca.markets/v2/options/contracts?underlying_symbols=%s", optreq.Ticker)
 	url := fmt.Sprintf("%s?feed=indicative&limit=1000&type=%s&strike_price_gte=%d&strike_price_lte=%d&expiration_date_gte=%s&expiration_date_lte=%s",
 		baseURL,
 		optreq.Contract_type,
