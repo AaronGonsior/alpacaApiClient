@@ -588,3 +588,55 @@ func getBool(v interface{}) bool {
 
 	return false
 }
+
+func GetUSDEUR() (float64, error) {
+	config, err := loadConfig()
+	if err != nil {
+		return 0, fmt.Errorf("error loading config: %v", err)
+	}
+
+	url := "https://data.alpaca.markets/v1beta1/forex/latest/rates?currency_pairs=EURUSD"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("error creating request: %v", err)
+	}
+
+	req.Header.Add("accept", "application/json")
+	req.Header.Add("APCA-API-KEY-ID", config.APIKeyID)
+	req.Header.Add("APCA-API-SECRET-KEY", config.APISecretKey)
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("error making request: %v", err)
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return 0, fmt.Errorf("error reading response: %v", err)
+	}
+
+	// Parse the JSON response
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return 0, fmt.Errorf("error parsing JSON: %v", err)
+	}
+
+	// Navigate through the JSON structure to get the rate
+	rates, ok := data["rates"].(map[string]interface{})
+	if !ok {
+		return 0, fmt.Errorf("no rates data found in response")
+	}
+
+	eurusd, ok := rates["EURUSD"].(map[string]interface{})
+	if !ok {
+		return 0, fmt.Errorf("no EURUSD data found in response")
+	}
+
+	rate, ok := eurusd["rate"].(float64)
+	if !ok {
+		return 0, fmt.Errorf("no rate found for EURUSD")
+	}
+
+	return rate, nil
+}
