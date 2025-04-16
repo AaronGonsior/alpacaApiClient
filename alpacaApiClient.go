@@ -179,14 +179,25 @@ func JsonToOptions(path string) []Option {
 
 		// Create new Option from latestQuote data
 		newOption := Option{
-			Ap: getFloat64(latestQuote["ap"]),
-			As: getInt(latestQuote["as"]),
-			Ax: getString(latestQuote["ax"]),
-			Bp: getFloat64(latestQuote["bp"]),
-			Bs: getInt(latestQuote["bs"]),
-			Bx: getString(latestQuote["bx"]),
-			C:  getString(latestQuote["c"]),
-			T:  getString(latestQuote["t"]),
+			ID:                getString(latestQuote["id"]),
+			Symbol:            getString(latestQuote["symbol"]),
+			Name:              getString(latestQuote["name"]),
+			Status:            getString(latestQuote["status"]),
+			Tradable:          getBool(latestQuote["tradable"]),
+			ExpirationDate:    getString(latestQuote["expiration_date"]),
+			RootSymbol:        getString(latestQuote["root_symbol"]),
+			UnderlyingSymbol:  getString(latestQuote["underlying_symbol"]),
+			UnderlyingAssetID: getString(latestQuote["underlying_asset_id"]),
+			Type:              getString(latestQuote["type"]),
+			Style:             getString(latestQuote["style"]),
+			StrikePrice:       getFloat64(latestQuote["strike_price"]),
+			Multiplier:        getInt(latestQuote["multiplier"]),
+			Size:              getInt(latestQuote["size"]),
+			OpenInterest:      getInt(latestQuote["open_interest"]),
+			OpenInterestDate:  getString(latestQuote["open_interest_date"]),
+			ClosePrice:        getFloat64(latestQuote["close_price"]),
+			ClosePriceDate:    getString(latestQuote["close_price_date"]),
+			PPIND:             getBool(latestQuote["ppind"]),
 		}
 
 		options = append(options, newOption)
@@ -226,15 +237,25 @@ type OptionURLReq struct {
 }
 
 type Option struct {
-	ID string  // ID
-	Ap float64 // Ask Price
-	As int     // Ask Size
-	Ax string  // Ask Exchange
-	Bp float64 // Bid Price
-	Bs int     // Bid Size
-	Bx string  // Bid Exchange
-	C  string  // Condition
-	T  string  // Timestamp
+	ID                string  `json:"id"`
+	Symbol            string  `json:"symbol"`
+	Name              string  `json:"name"`
+	Status            string  `json:"status"`
+	Tradable          bool    `json:"tradable"`
+	ExpirationDate    string  `json:"expiration_date"`
+	RootSymbol        string  `json:"root_symbol"`
+	UnderlyingSymbol  string  `json:"underlying_symbol"`
+	UnderlyingAssetID string  `json:"underlying_asset_id"`
+	Type              string  `json:"type"`
+	Style             string  `json:"style"`
+	StrikePrice       float64 `json:"strike_price"`
+	Multiplier        int     `json:"multiplier"`
+	Size              int     `json:"size"`
+	OpenInterest      int     `json:"open_interest"`
+	OpenInterestDate  string  `json:"open_interest_date"`
+	ClosePrice        float64 `json:"close_price"`
+	ClosePriceDate    string  `json:"close_price_date"`
+	PPIND             bool    `json:"ppind"`
 }
 
 func (o Option) Print() string {
@@ -496,7 +517,7 @@ func URLoption(req OptionURLReq) (string, error) {
 	return "", nil
 }
 
-func SingleQuote(ticker string) (float64, error) {
+func singleQuote(ticker string) (float64, error) {
 	config, err := loadConfig()
 	if err != nil {
 		return 0, fmt.Errorf("Error loading config: %v", err)
@@ -547,4 +568,12 @@ func SingleQuote(ticker string) (float64, error) {
 	}
 
 	return ap, nil
+}
+
+func getBool(v interface{}) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+
+	return false
 }
