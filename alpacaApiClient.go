@@ -496,7 +496,7 @@ func URLoption(req OptionURLReq) (string, error) {
 	return "", nil
 }
 
-func singleQuote(ticker string) (float64, error) {
+func SingleQuote(ticker string) (float64, error) {
 	config, err := loadConfig()
 	if err != nil {
 		return 0, fmt.Errorf("Error loading config: %v", err)
