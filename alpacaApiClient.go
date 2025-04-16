@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -93,7 +94,7 @@ func main() {
 
 	//Test functions
 
-	url = "https://data.alpaca.markets/v1beta1/options/snapshots/TSLA?feed=indicative&limit=1000&type=call&page_token="
+	//url = "https://data.alpaca.markets/v1beta1/options/snapshots/TSLA?feed=indicative&limit=1000&type=call&page_token="
 	optreq := OptionURLReq{
 		Ticker:        "TSLA",
 		Contract_type: "call",
@@ -104,6 +105,7 @@ func main() {
 	options, _, err := GetOptions(optreq, -1)
 	check(err)
 	fmt.Println(len(options))
+
 }
 
 func check(err error) {
@@ -292,17 +294,15 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 		nMax = 10000
 	}
 
-	// Base URL for options chain with strike price and expiration date filtering
-	// Using limit=1000 to minimize API requests (maximum allowed by API)
-
-	baseURL := fmt.Sprintf("https://paper-api.alpaca.markets/v2/options/contracts?underlying_symbols=%s", optreq.Ticker)
-	url := fmt.Sprintf("%s?feed=indicative&limit=1000&type=%s&strike_price_gte=%d&strike_price_lte=%d&expiration_date_gte=%s&expiration_date_lte=%s",
-		baseURL,
+	// Initial URL with all parameters
+	url := fmt.Sprintf("https://paper-api.alpaca.markets/v2/options/contracts?underlying_symbols=%s&show_deliverables=false&expiration_date_gte=%s&expiration_date_lte=%s&type=%s&strike_price_gte=%v&strike_price_lte=%v&page_token=%s&limit=1000",
+		optreq.Ticker,
+		optreq.DateRange[0],
+		optreq.DateRange[1],
 		optreq.Contract_type,
 		optreq.StrikeRange[0],
 		optreq.StrikeRange[1],
-		optreq.DateRange[0],
-		optreq.DateRange[1])
+		"")
 
 	// Keep track of processed options to avoid duplicates
 	processedIDs := make(map[string]bool)
@@ -321,6 +321,7 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 		case <-tick:
 			// Make API request
 			_, bodyStr, err := APIRequest(url, 1)
+			//fmt.Println(bodyStr)
 			if err != nil {
 				return nil, log, err
 			}
@@ -331,52 +332,47 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 				return nil, log, err
 			}
 
-			// Get the snapshots
-			snapshots, ok := data["snapshots"].(map[string]interface{})
+			// Get the option_contracts array
+			contracts, ok := data["option_contracts"].([]interface{})
 			if !ok {
-				return nil, log, fmt.Errorf("invalid response format: snapshots not found")
+				return nil, log, fmt.Errorf("invalid response format: option_contracts not found or not an array")
 			}
 
 			// Process each option in the current page
-			for id, snapshot := range snapshots {
+			for _, contract := range contracts {
+				contractMap, ok := contract.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				id := getString(contractMap["id"])
 				// Skip if we've already processed this option
 				if processedIDs[id] {
 					continue
 				}
 				processedIDs[id] = true
 
-				snapshotMap, ok := snapshot.(map[string]interface{})
-				if !ok {
-					continue
-				}
-
-				// Get the latestQuote
-				latestQuote, ok := snapshotMap["option_contracts"].(map[string]interface{})
-				if !ok {
-					continue
-				}
-
 				// Create new Option
 				newOption := Option{
-					ID:                getString(latestQuote["id"]),
-					Symbol:            getString(latestQuote["symbol"]),
-					Name:              getString(latestQuote["name"]),
-					Status:            getString(latestQuote["status"]),
-					Tradable:          getBool(latestQuote["tradable"]),
-					ExpirationDate:    getString(latestQuote["expiration_date"]),
-					RootSymbol:        getString(latestQuote["root_symbol"]),
-					UnderlyingSymbol:  getString(latestQuote["underlying_symbol"]),
-					UnderlyingAssetID: getString(latestQuote["underlying_asset_id"]),
-					Type:              getString(latestQuote["type"]),
-					Style:             getString(latestQuote["style"]),
-					StrikePrice:       getFloat64(latestQuote["strike_price"]),
-					Multiplier:        getInt(latestQuote["multiplier"]),
-					Size:              getInt(latestQuote["size"]),
-					OpenInterest:      getInt(latestQuote["open_interest"]),
-					OpenInterestDate:  getString(latestQuote["open_interest_date"]),
-					ClosePrice:        getFloat64(latestQuote["close_price"]),
-					ClosePriceDate:    getString(latestQuote["close_price_date"]),
-					PPIND:             getBool(latestQuote["ppind"]),
+					ID:                id,
+					Symbol:            getString(contractMap["symbol"]),
+					Name:              getString(contractMap["name"]),
+					Status:            getString(contractMap["status"]),
+					Tradable:          getBool(contractMap["tradable"]),
+					ExpirationDate:    getString(contractMap["expiration_date"]),
+					RootSymbol:        getString(contractMap["root_symbol"]),
+					UnderlyingSymbol:  getString(contractMap["underlying_symbol"]),
+					UnderlyingAssetID: getString(contractMap["underlying_asset_id"]),
+					Type:              getString(contractMap["type"]),
+					Style:             getString(contractMap["style"]),
+					StrikePrice:       parseFloat64(getString(contractMap["strike_price"])),
+					Multiplier:        parseInt(getString(contractMap["multiplier"])),
+					Size:              parseInt(getString(contractMap["size"])),
+					OpenInterest:      parseInt(getString(contractMap["open_interest"])),
+					OpenInterestDate:  getString(contractMap["open_interest_date"]),
+					ClosePrice:        parseFloat64(getString(contractMap["close_price"])),
+					ClosePriceDate:    getString(contractMap["close_price_date"]),
+					PPIND:             getBool(contractMap["ppind"]),
 				}
 
 				options = append(options, newOption)
@@ -404,14 +400,14 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 				return options, log, nil
 			}
 
-			// Update URL for next page with strike price and expiration date filtering
-			url = fmt.Sprintf("%s?feed=indicative&limit=1000&type=%s&strike_price_gte=%d&strike_price_lte=%d&expiration_date_gte=%s&expiration_date_lte=%s&page_token=%s",
-				baseURL,
+			// Update URL for next page
+			url = fmt.Sprintf("https://paper-api.alpaca.markets/v2/options/contracts?underlying_symbols=%s&show_deliverables=false&expiration_date_gte=%s&expiration_date_lte=%s&type=%s&strike_price_gte=%v&strike_price_lte=%v&page_token=%s&limit=1000",
+				optreq.Ticker,
+				optreq.DateRange[0],
+				optreq.DateRange[1],
 				optreq.Contract_type,
 				optreq.StrikeRange[0],
 				optreq.StrikeRange[1],
-				optreq.DateRange[0],
-				optreq.DateRange[1],
 				nextToken)
 			requestCounter++
 
@@ -420,6 +416,24 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 			}
 		}
 	}
+}
+
+// Helper function to parse string to float64
+func parseFloat64(s string) float64 {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return f
+}
+
+// Helper function to parse string to int
+func parseInt(s string) int {
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return i
 }
 
 func APIRequest(url string, iteration int) (string, string, error) {
@@ -432,7 +446,7 @@ func APIRequest(url string, iteration int) (string, string, error) {
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("error creating request: %v", err)
 	}
 
 	req.Header.Add("accept", "application/json")
@@ -442,7 +456,7 @@ func APIRequest(url string, iteration int) (string, string, error) {
 	var res *http.Response
 	res, err = http.DefaultClient.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("error making request: %v", err)
 	}
 
 	// Retry logic for nil response or non-200 status
@@ -453,55 +467,61 @@ func APIRequest(url string, iteration int) (string, string, error) {
 			fmt.Printf("Response is nil (possibly due to connection loss), waiting for 5 seconds and retrying (%d)\n", retryNr)
 		} else {
 			fmt.Printf("Received status code %d, waiting for 5 seconds and retrying (%d)\n", res.StatusCode, retryNr)
+			// Read error response body if available
+			if res.Body != nil {
+				errBody, _ := io.ReadAll(res.Body)
+				res.Body.Close()
+				fmt.Printf("Error response: %s\n", string(errBody))
+			}
 		}
 		waitTime := 5 * time.Second
 		time.Sleep(waitTime)
 		res, err = http.DefaultClient.Do(req)
 		if err != nil {
-			return "", "", err
+			return "", "", fmt.Errorf("error in retry attempt %d: %v", retryNr, err)
 		}
 		retryNr++
 		if retryNr >= maxRetry {
-			fmt.Printf("API Request failed after %d retries. Last status: %d\n", maxRetry, res.StatusCode)
-			return "", "", fmt.Errorf("max retries reached with status code %d", res.StatusCode)
+			return "", "", fmt.Errorf("max retries reached (%d) with status code %d", maxRetry, res.StatusCode)
 		}
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("error reading response body: %v", err)
 	}
 
 	if debug {
-		fmt.Println("Request made:")
-		fmt.Println(url)
-		fmt.Println("Response and body:")
-		fmt.Println(res, "\n", string(body))
+		fmt.Println("Request URL:", url)
+		fmt.Println("Response Status:", res.Status)
+		fmt.Println("Response Length:", len(string(body)))
 	}
 
-	// Check for error in response
-	if strings.Contains(string(body), "ERROR") {
-		errormsg := strings.Split(string(body), "\"error\":")[1]
-		errormsg = strings.Split(errormsg, "}")[0]
-		fmt.Printf("An error occurred: \n%s\nWaiting 60 seconds and retrying...\n", errormsg)
-		time.Sleep(60 * time.Second)
-		return APIRequest(url, 1)
+	// Check if response is empty
+	if len(body) == 0 {
+		return "", "", fmt.Errorf("empty response received")
 	}
 
-	// Check if response is empty or invalid
-	if len(strings.Split(string(body), "\"snapshots\":{")) < 2 {
+	// Validate JSON response
+	var jsonResponse map[string]interface{}
+	if err := json.Unmarshal(body, &jsonResponse); err != nil {
+		return "", "", fmt.Errorf("invalid JSON response: %v", err)
+	}
+
+	// Check for API error messages
+	if errMsg, ok := jsonResponse["message"].(string); ok && errMsg != "" {
+		return "", "", fmt.Errorf("API error: %s", errMsg)
+	}
+
+	// Check for option_contracts in response
+	if contracts, ok := jsonResponse["option_contracts"]; !ok {
+		// If no option_contracts field and no error message, might be a different type of response
 		if debug {
-			fmt.Println("no result")
+			fmt.Println("Response does not contain option_contracts field")
 		}
-		if iteration < 3 {
-			if debug {
-				fmt.Printf("ReRequesting in 500 milliseconds. That will be the %v%v reRequest.\n", iteration, stndrdth(iteration))
-			}
-			time.Sleep(500 * time.Millisecond)
-			return APIRequest(url, iteration+1)
-		}
-		return "", "", fmt.Errorf("no results")
+	} else if contracts == nil {
+		return "", "", fmt.Errorf("option_contracts field is null")
 	}
 
 	if debug {
@@ -587,56 +607,4 @@ func getBool(v interface{}) bool {
 	}
 
 	return false
-}
-
-func GetUSDEUR() (float64, error) {
-	config, err := loadConfig()
-	if err != nil {
-		return 0, fmt.Errorf("error loading config: %v", err)
-	}
-
-	url := "https://data.alpaca.markets/v1beta1/forex/latest/rates?currency_pairs=EURUSD"
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return 0, fmt.Errorf("error creating request: %v", err)
-	}
-
-	req.Header.Add("accept", "application/json")
-	req.Header.Add("APCA-API-KEY-ID", config.APIKeyID)
-	req.Header.Add("APCA-API-SECRET-KEY", config.APISecretKey)
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("error making request: %v", err)
-	}
-	defer res.Body.Close()
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return 0, fmt.Errorf("error reading response: %v", err)
-	}
-
-	// Parse the JSON response
-	var data map[string]interface{}
-	if err := json.Unmarshal(body, &data); err != nil {
-		return 0, fmt.Errorf("error parsing JSON: %v", err)
-	}
-
-	// Navigate through the JSON structure to get the rate
-	rates, ok := data["rates"].(map[string]interface{})
-	if !ok {
-		return 0, fmt.Errorf("no rates data found in response")
-	}
-
-	eurusd, ok := rates["EURUSD"].(map[string]interface{})
-	if !ok {
-		return 0, fmt.Errorf("no EURUSD data found in response")
-	}
-
-	rate, ok := eurusd["rate"].(float64)
-	if !ok {
-		return 0, fmt.Errorf("no rate found for EURUSD")
-	}
-
-	return rate, nil
 }
