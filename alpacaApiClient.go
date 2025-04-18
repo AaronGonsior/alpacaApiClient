@@ -106,6 +106,9 @@ func main() {
 	check(err)
 	fmt.Println(len(options))
 
+	fmt.Println(options[0])
+	fmt.Println(options[0].LatestQuote.AskPrice)
+
 }
 
 func check(err error) {
@@ -200,6 +203,15 @@ func JsonToOptions(path string) []Option {
 			ClosePrice:        getFloat64(latestQuote["close_price"]),
 			ClosePriceDate:    getString(latestQuote["close_price_date"]),
 			PPIND:             getBool(latestQuote["ppind"]),
+
+			// Initialize empty market data structures
+			DailyBar:     &Bar{},
+			PrevDailyBar: &Bar{},
+			MinuteBar:    &Bar{},
+			Greeks:       &Greeks{},
+			ImpliedVol:   0,
+			LatestQuote:  &Quote{},
+			LatestTrade:  &Trade{},
 		}
 
 		options = append(options, newOption)
@@ -238,7 +250,50 @@ type OptionURLReq struct {
 	DateRange     []string
 }
 
+// Bar represents price/volume data for a time period
+type Bar struct {
+	Close          float64   `json:"c"`
+	High           float64   `json:"h"`
+	Low            float64   `json:"l"`
+	NumberOfTrades int       `json:"n"`
+	Open           float64   `json:"o"`
+	Timestamp      time.Time `json:"t"`
+	Volume         int       `json:"v"`
+	VWAP           float64   `json:"vw"`
+}
+
+// Greeks represents the option Greeks
+type Greeks struct {
+	Delta float64 `json:"delta"`
+	Gamma float64 `json:"gamma"`
+	Rho   float64 `json:"rho"`
+	Theta float64 `json:"theta"`
+	Vega  float64 `json:"vega"`
+}
+
+// Quote represents the latest quote data
+type Quote struct {
+	AskPrice    float64   `json:"ap"`
+	AskSize     int       `json:"as"`
+	AskExchange string    `json:"ax"`
+	BidPrice    float64   `json:"bp"`
+	BidSize     int       `json:"bs"`
+	BidExchange string    `json:"bx"`
+	Condition   string    `json:"c"`
+	Timestamp   time.Time `json:"t"`
+}
+
+// Trade represents the latest trade data
+type Trade struct {
+	Condition string    `json:"c"`
+	Price     float64   `json:"p"`
+	Size      int       `json:"s"`
+	Timestamp time.Time `json:"t"`
+	Exchange  string    `json:"x"`
+}
+
 type Option struct {
+	// Basic contract information
 	ID                string  `json:"id"`
 	Symbol            string  `json:"symbol"`
 	Name              string  `json:"name"`
@@ -258,6 +313,15 @@ type Option struct {
 	ClosePrice        float64 `json:"close_price"`
 	ClosePriceDate    string  `json:"close_price_date"`
 	PPIND             bool    `json:"ppind"`
+
+	// Market data
+	DailyBar     *Bar    `json:"dailyBar"`
+	PrevDailyBar *Bar    `json:"prevDailyBar"`
+	MinuteBar    *Bar    `json:"minuteBar"`
+	Greeks       *Greeks `json:"greeks"`
+	ImpliedVol   float64 `json:"impliedVolatility"`
+	LatestQuote  *Quote  `json:"latestQuote"`
+	LatestTrade  *Trade  `json:"latestTrade"`
 }
 
 func (o Option) Print() string {
@@ -321,7 +385,6 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 		case <-tick:
 			// Make API request
 			_, bodyStr, err := APIRequest(url, 1)
-			//fmt.Println(bodyStr)
 			if err != nil {
 				return nil, log, err
 			}
@@ -373,6 +436,15 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 					ClosePrice:        parseFloat64(getString(contractMap["close_price"])),
 					ClosePriceDate:    getString(contractMap["close_price_date"]),
 					PPIND:             getBool(contractMap["ppind"]),
+
+					// Initialize empty market data structures
+					DailyBar:     &Bar{},
+					PrevDailyBar: &Bar{},
+					MinuteBar:    &Bar{},
+					Greeks:       &Greeks{},
+					ImpliedVol:   0,
+					LatestQuote:  &Quote{},
+					LatestTrade:  &Trade{},
 				}
 
 				options = append(options, newOption)
@@ -385,19 +457,21 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 				// Check if we've reached the maximum number of options
 				if nMax > 0 && len(options) >= nMax {
 					if print {
-						fmt.Println("")
+						fmt.Println("\nReached maximum number of options")
 					}
-					return options, log, nil
+					goto MARKET_DATA
 				}
 			}
+
+			requestCounter++
 
 			// Check for next page token
 			nextToken, ok := data["next_page_token"].(string)
 			if !ok || nextToken == "" {
 				if print {
-					fmt.Println("")
+					fmt.Println("\nCompleted fetching basic option data")
 				}
-				return options, log, nil
+				goto MARKET_DATA
 			}
 
 			// Update URL for next page
@@ -409,12 +483,234 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 				optreq.StrikeRange[0],
 				optreq.StrikeRange[1],
 				nextToken)
-			requestCounter++
+		}
+	}
 
-			if print {
-				fmt.Printf("\r %v API requests successfully made - %v available options found", requestCounter+1, optionCounter)
+MARKET_DATA:
+	// Now get the market data for these options
+	if print {
+		fmt.Println("Fetching market data for options...")
+	}
+
+	// Create a map for quick option lookup by symbol
+	optionMap := make(map[string]*Option)
+	for i := range options {
+		optionMap[options[i].Symbol] = &options[i]
+		if print && i < 5 {
+			fmt.Printf("Sample option symbol from first API: %s\n", options[i].Symbol)
+		}
+	}
+
+	nextToken := ""
+	// Initial market data URL
+	marketDataURL := fmt.Sprintf("https://data.alpaca.markets/v1beta1/options/snapshots/%s?feed=indicative&limit=1000&page_token=%s&strike_price_gte=%v&strike_price_lte=%v&expiration_date_gte=%s&expiration_date_lte=%s&type=%s",
+		optreq.Ticker,
+		nextToken,
+		optreq.StrikeRange[0],
+		optreq.StrikeRange[1],
+		optreq.DateRange[0],
+		optreq.DateRange[1],
+		optreq.Contract_type,
+	)
+
+	marketRequestCounter := 0
+	marketDataProcessed := 0
+	symbolsNotFound := make(map[string]bool)
+
+	// Continue fetching market data until no more pages
+	for {
+		_, bodyStr, err := APIRequest(marketDataURL, 1)
+		if err != nil {
+			return options, log + "\nError fetching market data: " + err.Error(), nil
+		}
+
+		// Parse the market data response
+		var marketData map[string]interface{}
+		if err := json.Unmarshal([]byte(bodyStr), &marketData); err != nil {
+			return options, log + "\nError parsing market data: " + err.Error(), nil
+		}
+
+		// Update options with market data
+		snapshots, ok := marketData["snapshots"].(map[string]interface{})
+		if !ok {
+			return options, log + "\nNo snapshots found in market data", nil
+		}
+
+		if marketRequestCounter == 0 && print {
+			fmt.Println("Sample symbols from second API:")
+			count := 0
+			for symbol := range snapshots {
+				if count < 5 {
+					fmt.Printf("Sample market data symbol: %s\n", symbol)
+					count++
+				} else {
+					break
+				}
 			}
 		}
+
+		for symbol, data := range snapshots {
+			//fmt.Println("\n symbol: ", symbol)
+
+			option, exists := optionMap[symbol]
+			//fmt.Println("\n option found with same symbol: ", option, "(symbol: ", option.Symbol, ")")
+
+			if !exists {
+				if !symbolsNotFound[symbol] {
+					symbolsNotFound[symbol] = true
+					if print {
+						fmt.Printf("Warning: No matching option found for symbol: %s\n", symbol)
+					}
+				}
+				continue
+			}
+
+			snapshot, ok := data.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			// Parse DailyBar
+			if dailyBar, ok := snapshot["dailyBar"].(map[string]interface{}); ok {
+				timestamp, _ := time.Parse(time.RFC3339, getString(dailyBar["t"]))
+				option.DailyBar.Close = getFloat64(dailyBar["c"])
+				option.DailyBar.High = getFloat64(dailyBar["h"])
+				option.DailyBar.Low = getFloat64(dailyBar["l"])
+				option.DailyBar.NumberOfTrades = getInt(dailyBar["n"])
+				option.DailyBar.Open = getFloat64(dailyBar["o"])
+				option.DailyBar.Timestamp = timestamp
+				option.DailyBar.Volume = getInt(dailyBar["v"])
+				option.DailyBar.VWAP = getFloat64(dailyBar["vw"])
+			}
+
+			// Parse PrevDailyBar
+			if prevDailyBar, ok := snapshot["prevDailyBar"].(map[string]interface{}); ok {
+				timestamp, _ := time.Parse(time.RFC3339, getString(prevDailyBar["t"]))
+				option.PrevDailyBar.Close = getFloat64(prevDailyBar["c"])
+				option.PrevDailyBar.High = getFloat64(prevDailyBar["h"])
+				option.PrevDailyBar.Low = getFloat64(prevDailyBar["l"])
+				option.PrevDailyBar.NumberOfTrades = getInt(prevDailyBar["n"])
+				option.PrevDailyBar.Open = getFloat64(prevDailyBar["o"])
+				option.PrevDailyBar.Timestamp = timestamp
+				option.PrevDailyBar.Volume = getInt(prevDailyBar["v"])
+				option.PrevDailyBar.VWAP = getFloat64(prevDailyBar["vw"])
+			}
+
+			// Parse MinuteBar
+			if minuteBar, ok := snapshot["minuteBar"].(map[string]interface{}); ok {
+				timestamp, _ := time.Parse(time.RFC3339, getString(minuteBar["t"]))
+				option.MinuteBar.Close = getFloat64(minuteBar["c"])
+				option.MinuteBar.High = getFloat64(minuteBar["h"])
+				option.MinuteBar.Low = getFloat64(minuteBar["l"])
+				option.MinuteBar.NumberOfTrades = getInt(minuteBar["n"])
+				option.MinuteBar.Open = getFloat64(minuteBar["o"])
+				option.MinuteBar.Timestamp = timestamp
+				option.MinuteBar.Volume = getInt(minuteBar["v"])
+				option.MinuteBar.VWAP = getFloat64(minuteBar["vw"])
+			}
+
+			// Parse Greeks
+			if greeks, ok := snapshot["greeks"].(map[string]interface{}); ok {
+				option.Greeks.Delta = getFloat64(greeks["delta"])
+				option.Greeks.Gamma = getFloat64(greeks["gamma"])
+				option.Greeks.Rho = getFloat64(greeks["rho"])
+				option.Greeks.Theta = getFloat64(greeks["theta"])
+				option.Greeks.Vega = getFloat64(greeks["vega"])
+			}
+
+			// Parse ImpliedVolatility
+			option.ImpliedVol = getFloat64(snapshot["impliedVolatility"])
+
+			// Parse LatestQuote
+			if quote, ok := snapshot["latestQuote"].(map[string]interface{}); ok {
+				timestamp, _ := time.Parse(time.RFC3339Nano, getString(quote["t"]))
+				option.LatestQuote.AskPrice = getFloat64(quote["ap"])
+				option.LatestQuote.AskSize = getInt(quote["as"])
+				option.LatestQuote.AskExchange = getString(quote["ax"])
+				option.LatestQuote.BidPrice = getFloat64(quote["bp"])
+				option.LatestQuote.BidSize = getInt(quote["bs"])
+				option.LatestQuote.BidExchange = getString(quote["bx"])
+				option.LatestQuote.Condition = getString(quote["c"])
+				option.LatestQuote.Timestamp = timestamp
+			}
+
+			// Parse LatestTrade
+			if trade, ok := snapshot["latestTrade"].(map[string]interface{}); ok {
+				timestamp, _ := time.Parse(time.RFC3339Nano, getString(trade["t"]))
+				option.LatestTrade.Condition = getString(trade["c"])
+				option.LatestTrade.Price = getFloat64(trade["p"])
+				option.LatestTrade.Size = getInt(trade["s"])
+				option.LatestTrade.Timestamp = timestamp
+				option.LatestTrade.Exchange = getString(trade["x"])
+			}
+
+			marketDataProcessed++
+			if print {
+				fmt.Printf("\rProcessed market data for %s", symbol)
+			}
+		}
+
+		marketRequestCounter++
+		if print {
+			fmt.Printf("\n%v market data API requests made - %v options updated\n", marketRequestCounter, marketDataProcessed)
+			fmt.Printf("Total symbols not found: %d\n", len(symbolsNotFound))
+		}
+
+		// Check for next page token
+		nextToken, ok = marketData["next_page_token"].(string)
+		if !ok || nextToken == "" {
+			if print {
+				fmt.Println("\nMarket data fetching completed")
+			}
+			break
+		}
+
+		// Update URL with next page token
+		marketDataURL = fmt.Sprintf("https://data.alpaca.markets/v1beta1/options/snapshots/%s?feed=indicative&limit=1000&page_token=%s&strike_price_gte=%v&strike_price_lte=%v&expiration_date_gte=%s&expiration_date_lte=%s&type=%s",
+			optreq.Ticker,
+			nextToken,
+			optreq.StrikeRange[0],
+			optreq.StrikeRange[1],
+			optreq.DateRange[0],
+			optreq.DateRange[1],
+			optreq.Contract_type,
+		)
+	}
+
+	if print {
+		fmt.Printf("Total options processed: %d, Market data updates: %d\n", len(options), marketDataProcessed)
+		if len(symbolsNotFound) > 0 {
+			fmt.Println("\nSymbols from second API that weren't found in first API:")
+			for symbol := range symbolsNotFound {
+				fmt.Println(symbol)
+			}
+		}
+	}
+
+	return options, log, nil
+}
+
+// Helper function to build comma-separated list of option symbols
+func buildSymbolsList(options []Option) string {
+	var symbols []string
+	for _, opt := range options {
+		symbols = append(symbols, opt.Symbol)
+	}
+	return strings.Join(symbols, ",")
+}
+
+// Helper function to parse Bar data
+func parseBar(data map[string]interface{}) *Bar {
+	timestamp, _ := time.Parse(time.RFC3339Nano, getString(data["t"]))
+	return &Bar{
+		Close:          getFloat64(data["c"]),
+		High:           getFloat64(data["h"]),
+		Low:            getFloat64(data["l"]),
+		NumberOfTrades: getInt(data["n"]),
+		Open:           getFloat64(data["o"]),
+		Timestamp:      timestamp,
+		Volume:         getInt(data["v"]),
+		VWAP:           getFloat64(data["vw"]),
 	}
 }
 
