@@ -608,7 +608,7 @@ MARKET_DATA:
 
 		if marketRequestCounter == 0 && print {
 			//fmt.Println("Sample symbols from second API:")
-			count := 0
+			//count := 0
 			/*
 				for symbol := range snapshots {
 					if count < 5 {
