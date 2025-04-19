@@ -136,73 +136,69 @@ func LoadJson(path string) string {
 	// Open the file for reading
 	file, err := os.Open(path)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Error opening file:", err)
 		return ""
 	}
 	defer file.Close()
 
-	// Decode the JSON data from the file
-	var readStr string
-	if err := json.NewDecoder(file).Decode(&readStr); err != nil {
-		fmt.Println(err)
+	// Read the entire file content
+	content, err := io.ReadAll(file)
+	if err != nil {
+		fmt.Println("Error reading file:", err)
 		return ""
 	}
 
-	// Return the decoded string
-	return fmt.Sprint(readStr)
+	return string(content)
 }
 
 func JsonToOptions(path string) []Option {
-	str := LoadJson(path)
+	content := LoadJson(path)
+	if content == "" {
+		return nil
+	}
 
 	// Parse the JSON into a map
 	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(str), &data); err != nil {
+	if err := json.Unmarshal([]byte(content), &data); err != nil {
 		fmt.Println("Error parsing JSON:", err)
 		return nil
 	}
 
-	// Get the snapshots
-	snapshots, ok := data["snapshots"].(map[string]interface{})
+	// Get the options array
+	optionsData, ok := data["options"].([]interface{})
 	if !ok {
-		fmt.Println("Error: snapshots not found in JSON")
+		fmt.Println("Error: options array not found in JSON")
 		return nil
 	}
 
 	var options []Option
-	for id, snapshot := range snapshots {
-		snapshotMap, ok := snapshot.(map[string]interface{})
+	for _, opt := range optionsData {
+		optMap, ok := opt.(map[string]interface{})
 		if !ok {
 			continue
 		}
 
-		// Get the latestQuote
-		latestQuote, ok := snapshotMap["option_contracts"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		// Create new Option from latestQuote data
+		// Create new Option with basic data
 		newOption := Option{
-			ID:                id,
-			Symbol:            getString(latestQuote["symbol"]),
-			Name:              getString(latestQuote["name"]),
-			Status:            getString(latestQuote["status"]),
-			Tradable:          getBool(latestQuote["tradable"]),
-			ExpirationDate:    getString(latestQuote["expiration_date"]),
-			RootSymbol:        getString(latestQuote["root_symbol"]),
-			UnderlyingSymbol:  getString(latestQuote["underlying_symbol"]),
-			UnderlyingAssetID: getString(latestQuote["underlying_asset_id"]),
-			Type:              getString(latestQuote["type"]),
-			Style:             getString(latestQuote["style"]),
-			StrikePrice:       getFloat64(latestQuote["strike_price"]),
-			Multiplier:        getInt(latestQuote["multiplier"]),
-			Size:              getInt(latestQuote["size"]),
-			OpenInterest:      getInt(latestQuote["open_interest"]),
-			OpenInterestDate:  getString(latestQuote["open_interest_date"]),
-			ClosePrice:        getFloat64(latestQuote["close_price"]),
-			ClosePriceDate:    getString(latestQuote["close_price_date"]),
-			PPIND:             getBool(latestQuote["ppind"]),
+			ID:                getString(optMap["id"]),
+			Symbol:            getString(optMap["symbol"]),
+			Name:              getString(optMap["name"]),
+			Status:            getString(optMap["status"]),
+			Tradable:          getBool(optMap["tradable"]),
+			ExpirationDate:    getString(optMap["expiration_date"]),
+			RootSymbol:        getString(optMap["root_symbol"]),
+			UnderlyingSymbol:  getString(optMap["underlying_symbol"]),
+			UnderlyingAssetID: getString(optMap["underlying_asset_id"]),
+			Type:              getString(optMap["type"]),
+			Style:             getString(optMap["style"]),
+			StrikePrice:       getFloat64(optMap["strike_price"]),
+			Multiplier:        getInt(optMap["multiplier"]),
+			Size:              getInt(optMap["size"]),
+			OpenInterest:      getInt(optMap["open_interest"]),
+			OpenInterestDate:  getString(optMap["open_interest_date"]),
+			ClosePrice:        getFloat64(optMap["close_price"]),
+			ClosePriceDate:    getString(optMap["close_price_date"]),
+			PPIND:             getBool(optMap["ppind"]),
 
 			// Initialize empty market data structures
 			DailyBar:     &Bar{},
@@ -212,6 +208,80 @@ func JsonToOptions(path string) []Option {
 			ImpliedVol:   0,
 			LatestQuote:  &Quote{},
 			LatestTrade:  &Trade{},
+		}
+
+		// Parse DailyBar
+		if dailyBar, ok := optMap["dailyBar"].(map[string]interface{}); ok {
+			timestamp, _ := time.Parse(time.RFC3339, getString(dailyBar["t"]))
+			newOption.DailyBar.Close = getFloat64(dailyBar["c"])
+			newOption.DailyBar.High = getFloat64(dailyBar["h"])
+			newOption.DailyBar.Low = getFloat64(dailyBar["l"])
+			newOption.DailyBar.NumberOfTrades = getInt(dailyBar["n"])
+			newOption.DailyBar.Open = getFloat64(dailyBar["o"])
+			newOption.DailyBar.Timestamp = timestamp
+			newOption.DailyBar.Volume = getInt(dailyBar["v"])
+			newOption.DailyBar.VWAP = getFloat64(dailyBar["vw"])
+		}
+
+		// Parse PrevDailyBar
+		if prevDailyBar, ok := optMap["prevDailyBar"].(map[string]interface{}); ok {
+			timestamp, _ := time.Parse(time.RFC3339, getString(prevDailyBar["t"]))
+			newOption.PrevDailyBar.Close = getFloat64(prevDailyBar["c"])
+			newOption.PrevDailyBar.High = getFloat64(prevDailyBar["h"])
+			newOption.PrevDailyBar.Low = getFloat64(prevDailyBar["l"])
+			newOption.PrevDailyBar.NumberOfTrades = getInt(prevDailyBar["n"])
+			newOption.PrevDailyBar.Open = getFloat64(prevDailyBar["o"])
+			newOption.PrevDailyBar.Timestamp = timestamp
+			newOption.PrevDailyBar.Volume = getInt(prevDailyBar["v"])
+			newOption.PrevDailyBar.VWAP = getFloat64(prevDailyBar["vw"])
+		}
+
+		// Parse MinuteBar
+		if minuteBar, ok := optMap["minuteBar"].(map[string]interface{}); ok {
+			timestamp, _ := time.Parse(time.RFC3339, getString(minuteBar["t"]))
+			newOption.MinuteBar.Close = getFloat64(minuteBar["c"])
+			newOption.MinuteBar.High = getFloat64(minuteBar["h"])
+			newOption.MinuteBar.Low = getFloat64(minuteBar["l"])
+			newOption.MinuteBar.NumberOfTrades = getInt(minuteBar["n"])
+			newOption.MinuteBar.Open = getFloat64(minuteBar["o"])
+			newOption.MinuteBar.Timestamp = timestamp
+			newOption.MinuteBar.Volume = getInt(minuteBar["v"])
+			newOption.MinuteBar.VWAP = getFloat64(minuteBar["vw"])
+		}
+
+		// Parse Greeks
+		if greeks, ok := optMap["greeks"].(map[string]interface{}); ok {
+			newOption.Greeks.Delta = getFloat64(greeks["delta"])
+			newOption.Greeks.Gamma = getFloat64(greeks["gamma"])
+			newOption.Greeks.Rho = getFloat64(greeks["rho"])
+			newOption.Greeks.Theta = getFloat64(greeks["theta"])
+			newOption.Greeks.Vega = getFloat64(greeks["vega"])
+		}
+
+		// Parse ImpliedVolatility
+		newOption.ImpliedVol = getFloat64(optMap["impliedVolatility"])
+
+		// Parse LatestQuote
+		if quote, ok := optMap["latestQuote"].(map[string]interface{}); ok {
+			timestamp, _ := time.Parse(time.RFC3339Nano, getString(quote["t"]))
+			newOption.LatestQuote.AskPrice = getFloat64(quote["ap"])
+			newOption.LatestQuote.AskSize = getInt(quote["as"])
+			newOption.LatestQuote.AskExchange = getString(quote["ax"])
+			newOption.LatestQuote.BidPrice = getFloat64(quote["bp"])
+			newOption.LatestQuote.BidSize = getInt(quote["bs"])
+			newOption.LatestQuote.BidExchange = getString(quote["bx"])
+			newOption.LatestQuote.Condition = getString(quote["c"])
+			newOption.LatestQuote.Timestamp = timestamp
+		}
+
+		// Parse LatestTrade
+		if trade, ok := optMap["latestTrade"].(map[string]interface{}); ok {
+			timestamp, _ := time.Parse(time.RFC3339Nano, getString(trade["t"]))
+			newOption.LatestTrade.Condition = getString(trade["c"])
+			newOption.LatestTrade.Price = getFloat64(trade["p"])
+			newOption.LatestTrade.Size = getInt(trade["s"])
+			newOption.LatestTrade.Timestamp = timestamp
+			newOption.LatestTrade.Exchange = getString(trade["x"])
 		}
 
 		options = append(options, newOption)
@@ -497,7 +567,7 @@ MARKET_DATA:
 	for i := range options {
 		optionMap[options[i].Symbol] = &options[i]
 		if print && i < 5 {
-			fmt.Printf("Sample option symbol from first API: %s\n", options[i].Symbol)
+			//fmt.Printf("Sample option symbol from first API: %s\n", options[i].Symbol)
 		}
 	}
 
@@ -537,11 +607,11 @@ MARKET_DATA:
 		}
 
 		if marketRequestCounter == 0 && print {
-			fmt.Println("Sample symbols from second API:")
+			//fmt.Println("Sample symbols from second API:")
 			count := 0
 			for symbol := range snapshots {
 				if count < 5 {
-					fmt.Printf("Sample market data symbol: %s\n", symbol)
+					//fmt.Printf("Sample market data symbol: %s\n", symbol)
 					count++
 				} else {
 					break
