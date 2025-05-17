@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -11,6 +12,15 @@ import (
 	"strings"
 	"time"
 )
+
+var (
+	APIKeyID     string
+	APISecretKey string
+)
+
+func init() {
+	handleApiKeyInit()
+}
 
 type Config struct {
 	APIKeyID     string `json:"api_key_id"`
@@ -157,6 +167,9 @@ func JsonToOptions(path string) []Option {
 		return nil
 	}
 
+	//fmt.Println("content: ", content)
+	//os.Exit(123)
+
 	// Parse the JSON into a map
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(content), &data); err != nil {
@@ -178,7 +191,7 @@ func JsonToOptions(path string) []Option {
 			continue
 		}
 
-		// Create new Option with basic data
+		// Create new Option with basic data and initialize all market data structures
 		newOption := Option{
 			ID:                getString(optMap["id"]),
 			Symbol:            getString(optMap["symbol"]),
@@ -200,17 +213,65 @@ func JsonToOptions(path string) []Option {
 			ClosePriceDate:    getString(optMap["close_price_date"]),
 			PPIND:             getBool(optMap["ppind"]),
 
-			// Initialize empty market data structures
-			DailyBar:     &Bar{},
-			PrevDailyBar: &Bar{},
-			MinuteBar:    &Bar{},
-			Greeks:       &Greeks{},
-			ImpliedVol:   0,
-			LatestQuote:  &Quote{},
-			LatestTrade:  &Trade{},
+			// Initialize all market data structures with empty values
+			DailyBar: &Bar{
+				Close:          0,
+				High:           0,
+				Low:            0,
+				NumberOfTrades: 0,
+				Open:           0,
+				Timestamp:      time.Time{},
+				Volume:         0,
+				VWAP:           0,
+			},
+			PrevDailyBar: &Bar{
+				Close:          0,
+				High:           0,
+				Low:            0,
+				NumberOfTrades: 0,
+				Open:           0,
+				Timestamp:      time.Time{},
+				Volume:         0,
+				VWAP:           0,
+			},
+			MinuteBar: &Bar{
+				Close:          0,
+				High:           0,
+				Low:            0,
+				NumberOfTrades: 0,
+				Open:           0,
+				Timestamp:      time.Time{},
+				Volume:         0,
+				VWAP:           0,
+			},
+			Greeks: &Greeks{
+				Delta: 0,
+				Gamma: 0,
+				Rho:   0,
+				Theta: 0,
+				Vega:  0,
+			},
+			ImpliedVol: 0,
+			LatestQuote: &Quote{
+				AskPrice:    0,
+				AskSize:     0,
+				AskExchange: "",
+				BidPrice:    0,
+				BidSize:     0,
+				BidExchange: "",
+				Condition:   "",
+				Timestamp:   time.Time{},
+			},
+			LatestTrade: &Trade{
+				Condition: "",
+				Price:     0,
+				Size:      0,
+				Timestamp: time.Time{},
+				Exchange:  "",
+			},
 		}
 
-		// Parse DailyBar
+		// Parse DailyBar if it exists
 		if dailyBar, ok := optMap["dailyBar"].(map[string]interface{}); ok {
 			timestamp, _ := time.Parse(time.RFC3339, getString(dailyBar["t"]))
 			newOption.DailyBar.Close = getFloat64(dailyBar["c"])
@@ -223,7 +284,7 @@ func JsonToOptions(path string) []Option {
 			newOption.DailyBar.VWAP = getFloat64(dailyBar["vw"])
 		}
 
-		// Parse PrevDailyBar
+		// Parse PrevDailyBar if it exists
 		if prevDailyBar, ok := optMap["prevDailyBar"].(map[string]interface{}); ok {
 			timestamp, _ := time.Parse(time.RFC3339, getString(prevDailyBar["t"]))
 			newOption.PrevDailyBar.Close = getFloat64(prevDailyBar["c"])
@@ -236,7 +297,7 @@ func JsonToOptions(path string) []Option {
 			newOption.PrevDailyBar.VWAP = getFloat64(prevDailyBar["vw"])
 		}
 
-		// Parse MinuteBar
+		// Parse MinuteBar if it exists
 		if minuteBar, ok := optMap["minuteBar"].(map[string]interface{}); ok {
 			timestamp, _ := time.Parse(time.RFC3339, getString(minuteBar["t"]))
 			newOption.MinuteBar.Close = getFloat64(minuteBar["c"])
@@ -249,7 +310,7 @@ func JsonToOptions(path string) []Option {
 			newOption.MinuteBar.VWAP = getFloat64(minuteBar["vw"])
 		}
 
-		// Parse Greeks
+		// Parse Greeks if they exist
 		if greeks, ok := optMap["greeks"].(map[string]interface{}); ok {
 			newOption.Greeks.Delta = getFloat64(greeks["delta"])
 			newOption.Greeks.Gamma = getFloat64(greeks["gamma"])
@@ -258,10 +319,10 @@ func JsonToOptions(path string) []Option {
 			newOption.Greeks.Vega = getFloat64(greeks["vega"])
 		}
 
-		// Parse ImpliedVolatility
+		// Parse ImpliedVolatility if it exists
 		newOption.ImpliedVol = getFloat64(optMap["impliedVolatility"])
 
-		// Parse LatestQuote
+		// Parse LatestQuote if it exists
 		if quote, ok := optMap["latestQuote"].(map[string]interface{}); ok {
 			timestamp, _ := time.Parse(time.RFC3339Nano, getString(quote["t"]))
 			newOption.LatestQuote.AskPrice = getFloat64(quote["ap"])
@@ -274,7 +335,7 @@ func JsonToOptions(path string) []Option {
 			newOption.LatestQuote.Timestamp = timestamp
 		}
 
-		// Parse LatestTrade
+		// Parse LatestTrade if it exists
 		if trade, ok := optMap["latestTrade"].(map[string]interface{}); ok {
 			timestamp, _ := time.Parse(time.RFC3339Nano, getString(trade["t"]))
 			newOption.LatestTrade.Condition = getString(trade["c"])
@@ -507,14 +568,62 @@ func GetOptions(optreq OptionURLReq, nMax int) ([]Option, string, error) {
 					ClosePriceDate:    getString(contractMap["close_price_date"]),
 					PPIND:             getBool(contractMap["ppind"]),
 
-					// Initialize empty market data structures
-					DailyBar:     &Bar{},
-					PrevDailyBar: &Bar{},
-					MinuteBar:    &Bar{},
-					Greeks:       &Greeks{},
-					ImpliedVol:   0,
-					LatestQuote:  &Quote{},
-					LatestTrade:  &Trade{},
+					// Initialize all pointer fields with empty but non-nil structs
+					DailyBar: &Bar{
+						Close:          0,
+						High:           0,
+						Low:            0,
+						NumberOfTrades: 0,
+						Open:           0,
+						Timestamp:      time.Time{},
+						Volume:         0,
+						VWAP:           0,
+					},
+					PrevDailyBar: &Bar{
+						Close:          0,
+						High:           0,
+						Low:            0,
+						NumberOfTrades: 0,
+						Open:           0,
+						Timestamp:      time.Time{},
+						Volume:         0,
+						VWAP:           0,
+					},
+					MinuteBar: &Bar{
+						Close:          0,
+						High:           0,
+						Low:            0,
+						NumberOfTrades: 0,
+						Open:           0,
+						Timestamp:      time.Time{},
+						Volume:         0,
+						VWAP:           0,
+					},
+					Greeks: &Greeks{
+						Delta: 0,
+						Gamma: 0,
+						Rho:   0,
+						Theta: 0,
+						Vega:  0,
+					},
+					ImpliedVol: 0,
+					LatestQuote: &Quote{
+						AskPrice:    0,
+						AskSize:     0,
+						AskExchange: "",
+						BidPrice:    0,
+						BidSize:     0,
+						BidExchange: "",
+						Condition:   "",
+						Timestamp:   time.Time{},
+					},
+					LatestTrade: &Trade{
+						Condition: "",
+						Price:     0,
+						Size:      0,
+						Timestamp: time.Time{},
+						Exchange:  "",
+					},
 				}
 
 				options = append(options, newOption)
@@ -606,10 +715,10 @@ MARKET_DATA:
 			return options, log + "\nNo snapshots found in market data", nil
 		}
 
-		if marketRequestCounter == 0 && print {
-			//fmt.Println("Sample symbols from second API:")
-			//count := 0
-			/*
+		/*
+			if marketRequestCounter == 0 && print {
+				//fmt.Println("Sample symbols from second API:")
+				count := 0
 				for symbol := range snapshots {
 					if count < 5 {
 						//fmt.Printf("Sample market data symbol: %s\n", symbol)
@@ -618,8 +727,8 @@ MARKET_DATA:
 						break
 					}
 				}
-			*/
-		}
+			}
+		*/
 
 		for symbol, data := range snapshots {
 			//fmt.Println("\n symbol: ", symbol)
@@ -807,10 +916,16 @@ func parseInt(s string) int {
 func APIRequest(url string, iteration int) (string, string, error) {
 	debug := false
 
-	config, err := loadConfig()
-	if err != nil {
-		return "", "", fmt.Errorf("error loading config: %v", err)
+	if APIKeyID == "" || APISecretKey == "" {
+		return "", "", fmt.Errorf("APIKeyID or APISecretKey is not set")
 	}
+
+	/*
+		config, err := loadConfig()
+		if err != nil {
+			return "", "", fmt.Errorf("error loading config: %v", err)
+		}
+	*/
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -818,8 +933,8 @@ func APIRequest(url string, iteration int) (string, string, error) {
 	}
 
 	req.Header.Add("accept", "application/json")
-	req.Header.Add("APCA-API-KEY-ID", config.APIKeyID)
-	req.Header.Add("APCA-API-SECRET-KEY", config.APISecretKey)
+	req.Header.Add("APCA-API-KEY-ID", APIKeyID)
+	req.Header.Add("APCA-API-SECRET-KEY", APISecretKey)
 
 	var res *http.Response
 	res, err = http.DefaultClient.Do(req)
@@ -916,10 +1031,52 @@ func URLoption(req OptionURLReq) (string, error) {
 	return "", nil
 }
 
+func MergeRequests(optreqs []OptionURLReq, nMax int) ([]Option, error) {
+
+	if APIKeyID == "" || APISecretKey == "" {
+		return []Option{}, fmt.Errorf("APIKeyID or APISecretKey is not set")
+	}
+	log.Println("APIKeyID and APISecretKey are set")
+
+	var options []Option
+	log := ""
+	var msg string
+	var options_tmp []Option
+	var err error
+	for _, optreq := range optreqs {
+		options_tmp, msg, err = GetOptions(optreq, nMax)
+		if err != nil {
+			return []Option{}, fmt.Errorf("error getting options: %v", err)
+		}
+		for _, opt := range options_tmp {
+			options = append(options, opt)
+		}
+		log += msg
+	}
+	return options, nil
+}
+
+func ProvideApiKey(apiKeyID, apiSecretKey string) {
+	APIKeyID = apiKeyID
+	APISecretKey = apiSecretKey
+}
+
+func handleApiKeyInit() {
+	if APIKeyID == "" || APISecretKey == "" {
+		log.Println("Warning: APIKeyID or APISecretKey is not set by environment variables. Trying to load from config.json")
+		config, err := loadConfig()
+		if err != nil {
+			log.Println("Error loading config: %v", err)
+			return
+		}
+		APIKeyID = config.APIKeyID
+		APISecretKey = config.APISecretKey
+	}
+}
+
 func SingleQuote(ticker string) (float64, error) {
-	config, err := loadConfig()
-	if err != nil {
-		return 0, fmt.Errorf("Error loading config: %v", err)
+	if APIKeyID == "" || APISecretKey == "" {
+		return 0, fmt.Errorf("APIKeyID or APISecretKey is not set")
 	}
 
 	url := fmt.Sprintf("https://data.alpaca.markets/v2/stocks/quotes/latest?symbols=%s", ticker)
@@ -930,8 +1087,8 @@ func SingleQuote(ticker string) (float64, error) {
 	}
 
 	req.Header.Add("accept", "application/json")
-	req.Header.Add("APCA-API-KEY-ID", config.APIKeyID)
-	req.Header.Add("APCA-API-SECRET-KEY", config.APISecretKey)
+	req.Header.Add("APCA-API-KEY-ID", APIKeyID)
+	req.Header.Add("APCA-API-SECRET-KEY", APISecretKey)
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
